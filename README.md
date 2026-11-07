@@ -57,7 +57,7 @@ environment can never touch another.
 
 ## Prerequisites
 
-- Terraform >= 1.6, Azure CLI, Node.js 20
+- Terraform >= 1.6, Azure CLI, Node.js 24 (LTS)
 - An Azure subscription where you can create resources **and role assignments** (Owner, or
   Contributor + Role Based Access Control Administrator), because the module gives the
   identity running Terraform *Storage Blob Data Contributor* on the site's account
