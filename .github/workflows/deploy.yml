@@ -1,0 +1,139 @@
+name: deploy
+
+# Manual deployment of the dev environment using OpenID Connect (no client secret,
+# no storage account key). Needs one-time Azure setup - see "CI/CD" in README.md.
+on:
+  workflow_dispatch:
+
+# One deployment at a time; the azurerm backend's blob lease is the second line of defence.
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  TF_VERSION: "1.11.0"
+  TF_DIR: terraform/environments/dev
+  # Terraform's azurerm provider and backend authenticate with the GitHub OIDC token.
+  ARM_USE_OIDC: "true"
+  ARM_USE_AZUREAD: "true"
+  ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+      - run: npm ci && npm run build
+        working-directory: webapp
+      - uses: actions/upload-artifact@v4
+        with:
+          name: webapp-dist
+          path: webapp/dist
+          retention-days: 1
+
+  plan:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # lets the job request an OIDC token from GitHub
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+      - name: terraform init
+        run: >
+          terraform -chdir="$TF_DIR" init -input=false
+          -backend-config="resource_group_name=${{ vars.TFSTATE_RESOURCE_GROUP }}"
+          -backend-config="storage_account_name=${{ vars.TFSTATE_STORAGE_ACCOUNT }}"
+          -backend-config="container_name=tfstate"
+          -backend-config="key=azure-react-storage/dev.tfstate"
+      - name: terraform plan
+        run: terraform -chdir="$TF_DIR" plan -input=false -out=tfplan
+      - name: Plan summary
+        run: terraform -chdir="$TF_DIR" show -no-color tfplan | tail -n 50 >> "$GITHUB_STEP_SUMMARY"
+      # The saved plan is applied as-is after approval, so what was reviewed is what runs.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-dev
+          path: ${{ env.TF_DIR }}/tfplan
+          retention-days: 1
+
+  apply-and-deploy:
+    needs: [build, plan]
+    runs-on: ubuntu-latest
+    environment: dev # add required reviewers to this GitHub environment to gate the apply
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false # keeps 'terraform output -raw' clean
+      - uses: actions/download-artifact@v4
+        with:
+          name: tfplan-dev
+          path: ${{ env.TF_DIR }}
+      - name: terraform init
+        run: >
+          terraform -chdir="$TF_DIR" init -input=false
+          -backend-config="resource_group_name=${{ vars.TFSTATE_RESOURCE_GROUP }}"
+          -backend-config="storage_account_name=${{ vars.TFSTATE_STORAGE_ACCOUNT }}"
+          -backend-config="container_name=tfstate"
+          -backend-config="key=azure-react-storage/dev.tfstate"
+      - name: terraform apply (saved plan)
+        run: terraform -chdir="$TF_DIR" apply -input=false tfplan
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: webapp-dist
+          path: dist
+      - name: Upload to $web
+        run: |
+          ACCOUNT=$(terraform -chdir="$TF_DIR" output -raw storage_account_name)
+
+          # --auth-mode login: Entra ID + 'Storage Blob Data Contributor', no account key.
+          upload() {
+            # Hashed bundles never change: cache for a year. Upload them first so the new
+            # index.html never points at files that are not there yet.
+            az storage blob upload-batch --auth-mode login --account-name "$ACCOUNT" \
+              --destination '$web' --source dist --pattern 'assets/*' --overwrite \
+              --content-cache-control "public, max-age=31536000, immutable" --only-show-errors || return 1
+            # Everything else (index.html, ...) is revalidated on every request.
+            for f in $(cd dist && find . -type f ! -path './assets/*' | sed 's|^\./||'); do
+              az storage blob upload --auth-mode login --account-name "$ACCOUNT" \
+                --container-name '$web' --name "$f" --file "dist/$f" --overwrite \
+                --content-cache-control "no-cache" --only-show-errors || return 1
+            done
+          }
+
+          # On the first run the role assignment was just created; RBAC can take a few
+          # minutes to apply, so retry before failing.
+          for attempt in 1 2 3 4 5 6; do
+            if upload; then exit 0; fi
+            echo "Upload failed (attempt $attempt); retrying in 30 s"
+            sleep 30
+          done
+          echo "::error::Upload to \$web failed after 6 attempts"
+          exit 1
+      - name: Smoke test
+        run: |
+          URL=$(terraform -chdir="$TF_DIR" output -raw website_url)
+          curl -fsS --retry 5 --retry-delay 10 --retry-all-errors "$URL" | grep -q 'id="root"'
+          echo "Deployed: $URL" >> "$GITHUB_STEP_SUMMARY"
