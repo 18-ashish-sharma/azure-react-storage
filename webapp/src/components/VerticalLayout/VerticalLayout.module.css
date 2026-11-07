@@ -1,0 +1,17 @@
+.fullPage {
+  display: flex;
+  flex-flow: column nowrap;
+  min-height: 100%;
+}
+
+.header,
+.footer {
+  padding: 1rem 1.5rem;
+  background: #0078d4;
+  color: #ffffff;
+}
+
+.content {
+  flex-grow: 1;
+  padding: 1.5rem;
+}

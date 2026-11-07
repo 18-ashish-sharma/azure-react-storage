@@ -1,0 +1,7 @@
+# Copy to backend.hcl (git-ignored) and run: terraform init -backend-config=backend.hcl
+# The storage account is created once, outside this configuration (see README).
+resource_group_name  = "rg-tfstate"
+storage_account_name = "sttfstate00000"
+container_name       = "tfstate"
+key                  = "azure-react-storage/dev.tfstate"
+use_azuread_auth     = true
