@@ -1,48 +1,33 @@
-# We use npm to trigger deployments and updates, so ensure that
-# the node pieces are ignored.
-/node_modules
-/package-lock.json
+# Terraform
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfplan
+tfplan
+crash.log
+crash.*.log
+*.tfvars
+*.tfvars.json
+!example.tfvars
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+backend.hcl
+terraform/modules/**/.terraform.lock.hcl
 
-# Created by https://www.gitignore.io/api/macos,visualstudiocode
-# Edit at https://www.gitignore.io/?templates=macos,visualstudiocode
+# Node / React
+node_modules/
+build/
+dist/
+coverage/
+npm-debug.log*
 
-### macOS ###
-# General
+# IDE / OS
+.idea/
+.vscode/
 .DS_Store
-.AppleDouble
-.LSOverride
 
-# Icon must end with two \r
-Icon
-
-# Thumbnails
-._*
-
-# Files that might appear in the root of a volume
-.DocumentRevisions-V100
-.fseventsd
-.Spotlight-V100
-.TemporaryItems
-.Trashes
-.VolumeIcon.icns
-.com.apple.timemachine.donotpresent
-
-# Directories potentially created on remote AFP share
-.AppleDB
-.AppleDesktop
-Network Trash Folder
-Temporary Items
-.apdisk
-
-### VisualStudioCode ###
-.vscode/*
-!.vscode/settings.json
-!.vscode/tasks.json
-!.vscode/launch.json
-!.vscode/extensions.json
-
-### VisualStudioCode Patch ###
-# Ignore all local history of files
-.history
-
-# End of https://www.gitignore.io/api/macos,visualstudiocode
+# Local secrets
+.env
+.env.*
